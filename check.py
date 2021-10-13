@@ -41,9 +41,8 @@ def is_stream_online(url, quiet=False, wait=False, verbose=False):
         if not wait:
             return False
         if '/live' in url:
-            while True:
-                time.sleep(5)
-                return is_stream_online(url, quiet, wait, verbose)
+            time.sleep(60)
+            return is_stream_online(url, quiet, wait, verbose)
 
     if verbose:
         print('Video ID:', video_id)
