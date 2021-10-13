@@ -34,8 +34,16 @@ def is_stream_online(url, quiet=False, wait=False, verbose=False):
     regex_api_key = r"\"innertubeApiKey\":\"([^\"]+)\""
 
     # Get details
-    video_id = re.findall(regex_canonical, youtube_page, re.MULTILINE)[0]
-    api_key = re.findall(regex_api_key, youtube_page, re.MULTILINE)[0]
+    try:
+        video_id = re.findall(regex_canonical, youtube_page, re.MULTILINE)[0]
+        api_key = re.findall(regex_api_key, youtube_page, re.MULTILINE)[0]
+    except IndexError:
+        if not wait:
+            return False
+        if '/live' in url:
+            while True:
+                time.sleep(5)
+                return is_stream_online(url, quiet, wait, verbose)
 
     if verbose:
         print('Video ID:', video_id)
