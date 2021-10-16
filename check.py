@@ -2,10 +2,12 @@ import sys
 import re
 import json
 import time
+import argparse
 from datetime import datetime
 from urllib import request
+from requests import ConnectionError
 
-def get_metadata(video_id, api_key):
+def get_metadata(video_id, api_key, connection_timeout):
     data = json.dumps({
         'videoId': video_id,
         'context': {
@@ -23,9 +25,22 @@ def get_metadata(video_id, api_key):
     req = request.Request('https://www.youtube.com/youtubei/v1/updated_metadata?key={}'.format(api_key), data=data)
     req.add_header('Content-Type', 'application/json')
     res = request.urlopen(req)
-    return json.loads(res.read().decode('utf8'))
+    result = None
 
-def is_stream_online(url, quiet=False, wait=False, verbose=False):
+    start_time = time.time()
+    while True:
+        try:
+            result = json.loads(res.read().decode('utf8'))
+            break
+        except ConnectionError:
+            if time.time() > start_time + connection_timeout:
+                raise Exception('Unable to get updates after {} seconds of ConnectionErrors'.format(connection_timeout))
+            else:
+                time.sleep(10)
+
+    return result
+
+def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=False):
     # Fetch video page
     if not quiet:
         print('Fetching YouTube page...')
@@ -42,7 +57,7 @@ def is_stream_online(url, quiet=False, wait=False, verbose=False):
             return False
         if '/live' in url:
             time.sleep(60)
-            return is_stream_online(url, quiet, wait, verbose)
+            return is_stream_online(url, connection_timeout, quiet, wait, verbose)
 
     if verbose:
         print('Video ID:', video_id)
@@ -53,7 +68,7 @@ def is_stream_online(url, quiet=False, wait=False, verbose=False):
         print('Checking for stream status')
 
     while True:
-        heartbeat = get_metadata(video_id, api_key)
+        heartbeat = get_metadata(video_id, api_key, connection_timeout)
         if verbose:
             print(json.dumps(heartbeat, indent=2))
 
@@ -73,19 +88,21 @@ def is_stream_online(url, quiet=False, wait=False, verbose=False):
         time.sleep(5)
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("""youtube-stream-status
+    parser = argparse.ArgumentParser()
 
-Usage: {} [options] <youtube url>
- -q, --quiet  Do not output anything to stdout
- -w, --wait   Keep polling until the stream starts, then exit
- --verbose    Print heartbeat to stdout for debugging
-""".format(sys.argv[0]))
-        sys.exit(1)
-    url = sys.argv[-1]
-    quiet = '-q' in sys.argv or '--quiet' in sys.argv
-    wait = '-w' in sys.argv or '--wait' in sys.argv
-    verbose = '--verbose' in sys.argv
-    if is_stream_online(url, quiet, wait, verbose):
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-q', '--quiet', help='Do not output anything to stdout', action='store_true')
+    group.add_argument('--verbose', help='Print heartbeat to stdout for debugging', action='store_true')
+
+    parser.add_argument('-w', '--wait', help='Keep polling until the stream starts, then exit', action='store_true')
+    parser.add_argument('--timeout', help='How long to wait in case network fails (in seconds). 5 minutes by default', type=int, nargs='?', const=300, default=300)
+    parser.add_argument('url', help='YouTube url', type=str)
+
+    args = parser.parse_args()
+
+    if args.verbose:
+        print(args)
+
+    if is_stream_online(args.url, args.timeout, quiet=args.quiet, wait=args.wait, verbose=args.verbose):
         sys.exit(0)
     sys.exit(2)
