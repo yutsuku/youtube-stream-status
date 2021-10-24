@@ -6,6 +6,7 @@ import argparse
 from datetime import datetime
 from urllib import request
 from requests import ConnectionError
+from socket import gethostbyname, gaierror
 
 def get_metadata(video_id, api_key, connection_timeout):
     data = json.dumps({
@@ -27,37 +28,56 @@ def get_metadata(video_id, api_key, connection_timeout):
     res = request.urlopen(req)
     result = None
 
-    start_time = time.time()
-    while True:
-        try:
-            result = json.loads(res.read().decode('utf8'))
-            break
-        except ConnectionError:
-            if time.time() > start_time + connection_timeout:
-                raise Exception('Unable to get updates after {} seconds of ConnectionErrors'.format(connection_timeout))
-            else:
-                time.sleep(10)
+    try:
+        result = json.loads(res.read().decode('utf8'))
+    except:
+        pass
 
     return result
 
-def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=False):
-    # Fetch video page
+def get_keys(url, quiet=False):
     if not quiet:
         print('Fetching YouTube page...')
-    youtube_page = request.urlopen(url).read().decode('utf8')
+
     regex_canonical = r"<link rel=\"canonical\" href=\"https://www\.youtube\.com/watch\?v=(.{11})\">"
     regex_api_key = r"\"innertubeApiKey\":\"([^\"]+)\""
 
-    # Get details
     try:
-        video_id = re.findall(regex_canonical, youtube_page, re.MULTILINE)[0]
-        api_key = re.findall(regex_api_key, youtube_page, re.MULTILINE)[0]
-    except IndexError:
-        if not wait:
-            return False
-        if '/live' in url:
-            time.sleep(60)
-            return is_stream_online(url, connection_timeout, quiet, wait, verbose)
+        youtube_page = request.urlopen(url).read().decode('utf8')
+    except:
+        pass
+
+    video_id = re.findall(regex_canonical, youtube_page, re.MULTILINE)
+    api_key = re.findall(regex_api_key, youtube_page, re.MULTILINE)
+
+    if len(video_id) == 0:
+        video_id = None
+    else:
+        video_id = video_id[0]
+
+    if len(api_key) == 0:
+        api_key = None
+    else:
+        api_key = api_key[0]
+
+    return video_id, api_key
+
+def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=False):
+    video_id = None
+    api_key = None
+    start_time = time.time()
+    attempts = 0
+
+    while True:
+        attempts += 1
+        video_id, api_key = get_keys(url, quiet)
+                
+        if video_id and api_key:
+            break
+        else:
+            if time.time() > start_time + connection_timeout:
+                raise Exception('Unable to fetch base info after {} seconds and {} attempts'.format(connection_timeout, attempts))
+            time.sleep(60 + (60 * attempts / 2))
 
     if verbose:
         print('Video ID:', video_id)
@@ -67,8 +87,23 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
     if not quiet:
         print('Checking for stream status')
 
+    attempts = 0
+
     while True:
         heartbeat = get_metadata(video_id, api_key, connection_timeout)
+
+        if heartbeat is None:
+            if attempts > 10:
+                if not quiet:
+                    print('Giving up. Is the network unstable?')
+                return False
+
+            attempts += 1
+            time.sleep(60)
+            continue
+        else:
+            attempts = 0
+
         if verbose:
             print(json.dumps(heartbeat, indent=2))
 
@@ -103,6 +138,14 @@ if __name__ == '__main__':
     if args.verbose:
         print(args)
 
-    if is_stream_online(args.url, args.timeout, quiet=args.quiet, wait=args.wait, verbose=args.verbose):
-        sys.exit(0)
+    try:
+        if is_stream_online(args.url, args.timeout, quiet=args.quiet, wait=args.wait, verbose=args.verbose):
+            sys.exit(0)
+    except Exception as e:
+        if not args.quiet:
+            if hasattr(e, 'message'):
+                print(e.message)
+            else:
+                print(e)
+        pass
     sys.exit(2)
