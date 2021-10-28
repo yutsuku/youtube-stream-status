@@ -3,6 +3,7 @@ import re
 import json
 import time
 import argparse
+import random
 from datetime import datetime
 from urllib import request
 from requests import ConnectionError
@@ -41,6 +42,7 @@ def get_keys(url, quiet=False):
 
     regex_canonical = r"<link rel=\"canonical\" href=\"https://www\.youtube\.com/watch\?v=(.{11})\">"
     regex_api_key = r"\"innertubeApiKey\":\"([^\"]+)\""
+    youtube_page = None
 
     try:
         youtube_page = request.urlopen(url).read().decode('utf8')
@@ -62,7 +64,7 @@ def get_keys(url, quiet=False):
 
     return video_id, api_key
 
-def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=False):
+def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=False, timeout_max_sleep=0):
     video_id = None
     api_key = None
     start_time = time.time()
@@ -70,14 +72,37 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
 
     while True:
         attempts += 1
+        if verbose:
+            print('[{}] Attempting to fetch basic information. Attempt {}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), attempts))
         video_id, api_key = get_keys(url, quiet)
-                
+
         if video_id and api_key:
             break
         else:
+            wasted_time = int(time.time() - start_time)
+            sleep_time = 60 + (60 * attempts / 2)
+
+            if timeout_max_sleep > 0 and sleep_time > timeout_max_sleep:
+                sleep_time = timeout_max_sleep
+
+            jitter = int(sleep_time * 0.1)
+            jitter = random.randrange(0, jitter)
+
+            if random.randrange(0, 1) == 1:
+                sleep_time = sleep_time + jitter
+            else:
+                sleep_time = sleep_time - jitter
+                if sleep_time < 0:
+                    if timeout_max_sleep > 0:
+                        sleep_time = timeout_max_sleep
+                    else:
+                        sleep_time = 60
+
+            if not wait:
+                raise Exception('Unable to fetch base info after {} seconds and {} attempts'.format(wasted_time, attempts))
             if time.time() > start_time + connection_timeout:
-                raise Exception('Unable to fetch base info after {} seconds and {} attempts'.format(connection_timeout, attempts))
-            time.sleep(60 + (60 * attempts / 2))
+                raise Exception('Unable to fetch base info after {} seconds and {} attempts'.format(wasted_time, attempts))
+            time.sleep(sleep_time)
 
     if verbose:
         print('Video ID:', video_id)
@@ -131,6 +156,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-w', '--wait', help='Keep polling until the stream starts, then exit', action='store_true')
     parser.add_argument('--timeout', help='How long to wait in case network fails (in seconds). 5 minutes by default', type=int, nargs='?', const=300, default=300)
+    parser.add_argument('--timeout-max-sleep', help='Maximum allowed idle time (in seconds) between failed network requests. Infinite by default', type=int, nargs='?', const=0, default=0)
     parser.add_argument('url', help='YouTube url', type=str)
 
     args = parser.parse_args()
@@ -139,7 +165,7 @@ if __name__ == '__main__':
         print(args)
 
     try:
-        if is_stream_online(args.url, args.timeout, quiet=args.quiet, wait=args.wait, verbose=args.verbose):
+        if is_stream_online(args.url, args.timeout, quiet=args.quiet, wait=args.wait, verbose=args.verbose, timeout_max_sleep=args.timeout_max_sleep):
             sys.exit(0)
     except Exception as e:
         if not args.quiet:
