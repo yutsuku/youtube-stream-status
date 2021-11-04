@@ -4,10 +4,84 @@ import json
 import time
 import argparse
 import random
+import traceback
 from datetime import datetime
 from urllib import request
 from requests import ConnectionError
 from socket import gethostbyname, gaierror
+
+def custom_sleep(start_time, attempts, timeout_max_sleep):
+    wasted_time = int(time.time() - start_time)
+    sleep_time = 60 + (60 * attempts / 2)
+
+    if timeout_max_sleep > 0 and sleep_time > timeout_max_sleep:
+        sleep_time = timeout_max_sleep
+
+    jitter = int(sleep_time * 0.1)
+    jitter = random.randrange(0, jitter)
+
+    if random.randrange(0, 1) == 1:
+        sleep_time = sleep_time + jitter
+    else:
+        sleep_time = sleep_time - jitter
+        if sleep_time < 0:
+            if timeout_max_sleep > 0:
+                sleep_time = timeout_max_sleep
+            else:
+                sleep_time = 60
+    return sleep_time, wasted_time
+
+def get_stream_status(video_id, api_key):
+    data = json.dumps({
+        "videoId": video_id,
+        "context": {
+            "client": {
+                "hl": "en",
+                "gl": "JP",
+                "clientName": "WEB",
+                "clientVersion": "2.20211102.01.00",
+                "timeZone": "UTC"
+            }
+        },
+        "heartbeatRequestParams": {
+            "heartbeatChecks": ["HEARTBEAT_CHECK_TYPE_LIVE_STREAM_STATUS"]
+        }
+    }).encode('utf8')
+
+    req = request.Request('https://www.youtube.com/youtubei/v1/player/heartbeat?alt=json&key={}'.format(api_key), data=data)
+    req.add_header('Content-Type', 'application/json')
+
+    result = None
+    status = None # LIVE_STREAM_OFFLINE | OK
+    startTime = None
+
+    try:
+        res = request.urlopen(req)
+        result = json.loads(res.read().decode('utf8'))
+    except:
+        pass
+
+    if result is None:
+        return result, startTime
+
+    try:
+        status = result['playabilityStatus']['status']
+    except:
+        pass
+
+    try:
+        status = result['playabilityStatus']['status']
+    except:
+        pass
+
+    try:
+        startTime = int(result['playabilityStatus']['liveStreamability']['liveStreamabilityRenderer']['offlineSlate']['liveStreamOfflineSlateRenderer']['scheduledStartTime'])
+    except:
+        pass
+
+    return status, startTime
+
+
 
 def get_metadata(video_id, api_key, connection_timeout):
     data = json.dumps({
@@ -26,10 +100,10 @@ def get_metadata(video_id, api_key, connection_timeout):
 
     req = request.Request('https://www.youtube.com/youtubei/v1/updated_metadata?key={}'.format(api_key), data=data)
     req.add_header('Content-Type', 'application/json')
-    res = request.urlopen(req)
     result = None
 
     try:
+        res = request.urlopen(req)
         result = json.loads(res.read().decode('utf8'))
     except:
         pass
@@ -43,10 +117,13 @@ def get_keys(url, quiet=False):
     regex_canonical = r"<link rel=\"canonical\" href=\"https://www\.youtube\.com/watch\?v=(.{11})\">"
     regex_api_key = r"\"innertubeApiKey\":\"([^\"]+)\""
     youtube_page = None
+    video_id = None
+    api_key = None
 
     try:
         youtube_page = request.urlopen(url).read().decode('utf8')
     except:
+        return video_id, api_key
         pass
 
     video_id = re.findall(regex_canonical, youtube_page, re.MULTILINE)
@@ -79,24 +156,7 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
         if video_id and api_key:
             break
         else:
-            wasted_time = int(time.time() - start_time)
-            sleep_time = 60 + (60 * attempts / 2)
-
-            if timeout_max_sleep > 0 and sleep_time > timeout_max_sleep:
-                sleep_time = timeout_max_sleep
-
-            jitter = int(sleep_time * 0.1)
-            jitter = random.randrange(0, jitter)
-
-            if random.randrange(0, 1) == 1:
-                sleep_time = sleep_time + jitter
-            else:
-                sleep_time = sleep_time - jitter
-                if sleep_time < 0:
-                    if timeout_max_sleep > 0:
-                        sleep_time = timeout_max_sleep
-                    else:
-                        sleep_time = 60
+            sleep_time, wasted_time = custom_sleep(start_time, attempts, timeout_max_sleep)
 
             if not wait:
                 raise Exception('Unable to fetch base info after {} seconds and {} attempts'.format(wasted_time, attempts))
@@ -116,6 +176,7 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
 
     while True:
         heartbeat = get_metadata(video_id, api_key, connection_timeout)
+        status, startTime = get_stream_status(video_id, api_key)
 
         if heartbeat is None:
             if attempts > 10:
@@ -145,7 +206,17 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
         if not wait or is_online:
             return is_online
 
-        time.sleep(5)
+        if startTime:
+            now = int(time.time())
+            startsIn = startTime - now - 1
+            if startsIn > 0:
+                if not quiet:
+                    print('Waiting {} seconds for stream...'.format(startsIn))
+                time.sleep(startsIn)
+            else:
+                time.sleep(1)
+        else:
+            time.sleep(5)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -169,9 +240,11 @@ if __name__ == '__main__':
             sys.exit(0)
     except Exception as e:
         if not args.quiet:
+            print('Terminating')
             if hasattr(e, 'message'):
                 print(e.message)
             else:
                 print(e)
+            traceback.print_exception(type(e), e, e.__traceback__)
         pass
     sys.exit(2)
