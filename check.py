@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 import sys
 import re
 import json
@@ -60,6 +62,9 @@ def get_stream_status(video_id, api_key):
         result = json.loads(res.read().decode('utf8'))
     except:
         pass
+        
+    if args.verbose:
+        print('[{}] result: {}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), result))
 
     if result is None:
         return result, startTime
@@ -112,7 +117,7 @@ def get_metadata(video_id, api_key, connection_timeout):
 
 def get_keys(url, quiet=False):
     if not quiet:
-        print('Fetching YouTube page...')
+        print('Fetching "{}"'.format(url))
 
     regex_canonical = r"<link rel=\"canonical\" href=\"https://www\.youtube\.com/watch\?v=(.{11})\">"
     regex_api_key = r"\"innertubeApiKey\":\"([^\"]+)\""
@@ -128,6 +133,9 @@ def get_keys(url, quiet=False):
 
     video_id = re.findall(regex_canonical, youtube_page, re.MULTILINE)
     api_key = re.findall(regex_api_key, youtube_page, re.MULTILINE)
+
+    if not quiet:
+        print('video_id: {}, api_key: {}'.format(video_id, api_key))
 
     if len(video_id) == 0:
         video_id = None
@@ -165,8 +173,8 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
             time.sleep(sleep_time)
 
     if verbose:
-        print('Video ID:', video_id)
-        print('Found API Key', api_key)
+        print('[{}] Video ID: {}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), video_id))
+        print('[{}] Found API Key: {}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), api_key))
 
     # Send heartbeat
     if not quiet:
@@ -191,7 +199,7 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
             attempts = 0
 
         if verbose:
-            print(json.dumps(heartbeat, indent=2))
+            print('[{}] heartbeat: {}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), json.dumps(heartbeat, indent=2)))
 
         reason = None
         for action in heartbeat['actions']:
@@ -210,8 +218,15 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
             now = int(time.time())
             startsIn = startTime - now - 1
             if startsIn > 0:
+
+                if startsIn > timeout_max_sleep:
+                    if not quiet:
+                        print('[WARNING] Stream start time ({}) is longer than timeout ({}) - adjusting sleep time to match timeout.'.format(startsIn, timeout_max_sleep))
+                    startsIn = timeout_max_sleep
+
                 if not quiet:
                     print('Waiting {} seconds for stream...'.format(startsIn))
+
                 time.sleep(startsIn)
             else:
                 time.sleep(1)
@@ -233,7 +248,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.verbose:
-        print(args)
+        print('[{}] args: {}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), args))
 
     try:
         if is_stream_online(args.url, args.timeout, quiet=args.quiet, wait=args.wait, verbose=args.verbose, timeout_max_sleep=args.timeout_max_sleep):
