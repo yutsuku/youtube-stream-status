@@ -228,6 +228,9 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
                     print('Waiting {} seconds for stream...'.format(startsIn))
 
                 time.sleep(startsIn)
+
+                if startsIn == timeout_max_sleep:
+                    return False
             else:
                 time.sleep(1)
         else:
