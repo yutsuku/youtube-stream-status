@@ -16,6 +16,7 @@ optional arguments:
   --timeout [TIMEOUT]   How long to wait in case network fails (in seconds). 5 minutes by default
   --timeout-max-sleep [TIMEOUT_MAX_SLEEP]
                         Maximum allowed idle time (in seconds) between failed network requests. Infinite by default
+  --timeout-wait        How long to wait for stream that is about to start (in seconds). 15 minutes by default. Ignores --wait
 ```
 
 The script will exit with code `0` if the stream is online. If used without `--wait`, will exit with code `2` if the stream is not online.
