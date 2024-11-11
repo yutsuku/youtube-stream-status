@@ -87,6 +87,13 @@ def get_stream_status(video_id, api_key):
     return status, startTime
 
 
+def exponential_growth(x: int, a: float, b: int):
+    """
+    a is the initial value
+    b is the growth factor (constant percentage increase)
+    x is the independent variable (time or position)
+    """
+    return a * (b ** x)
 
 def get_metadata(video_id, api_key, connection_timeout):
     data = json.dumps({
@@ -149,7 +156,7 @@ def get_keys(url, quiet=False):
 
     return video_id, api_key
 
-def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=False, timeout_max_sleep=0):
+def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=False, timeout_max_sleep=0, timeout_wait=0):
     video_id = None
     api_key = None
     start_time = time.time()
@@ -181,6 +188,10 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
         print('Checking for stream status')
 
     attempts = 0
+    wasted_time = 0
+    wasted_sleep = 0
+    wasted_factor = 1.2
+    wasted_initial = 1
 
     while True:
         heartbeat = get_metadata(video_id, api_key, connection_timeout)
@@ -232,9 +243,18 @@ def is_stream_online(url, connection_timeout, quiet=False, wait=False, verbose=F
                 if startsIn == timeout_max_sleep:
                     return False
             else:
-                time.sleep(1)
+                if wasted_time > timeout_wait:
+                    raise Exception('Stream did not start after {} seconds. Giving up.'.format(wasted_time))
+
+                wasted_sleep = exponential_growth(wasted_initial, wasted_factor, wasted_sleep+wasted_initial)
+                wasted_time += wasted_sleep
+
+                if wasted_time > timeout_wait:
+                    raise Exception('Stream did not start after {} seconds. Giving up (timeout wait exceeded).'.format(wasted_time))
+
+                time.sleep(wasted_sleep)
         else:
-            time.sleep(5)
+            time.sleep(60)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -245,6 +265,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-w', '--wait', help='Keep polling until the stream starts, then exit', action='store_true')
     parser.add_argument('--timeout', help='How long to wait in case network fails (in seconds). 5 minutes by default', type=int, nargs='?', const=300, default=300)
+    parser.add_argument('--timeout-wait', help='How long to wait for stream that is about to start (in seconds). 15 minutes by default. Ignores --wait', type=int, nargs='?', const=900, default=900)
     parser.add_argument('--timeout-max-sleep', help='Maximum allowed idle time (in seconds) between failed network requests. Infinite by default', type=int, nargs='?', const=0, default=0)
     parser.add_argument('url', help='YouTube url', type=str)
 
@@ -254,7 +275,7 @@ if __name__ == '__main__':
         print('[{}] args: {}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), args))
 
     try:
-        if is_stream_online(args.url, args.timeout, quiet=args.quiet, wait=args.wait, verbose=args.verbose, timeout_max_sleep=args.timeout_max_sleep):
+        if is_stream_online(args.url, args.timeout, quiet=args.quiet, wait=args.wait, verbose=args.verbose, timeout_max_sleep=args.timeout_max_sleep, timeout_wait=args.timeout_wait):
             sys.exit(0)
     except Exception as e:
         if not args.quiet:
